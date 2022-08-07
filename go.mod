@@ -1,4 +1,4 @@
-module looog
+module github.com/2015WUJI01/looog
 
 go 1.18
 
