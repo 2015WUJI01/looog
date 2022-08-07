@@ -152,25 +152,26 @@ func OptionUseLevelFormat(flag int) Option {
 
 // caller style
 const (
-	CS_NONE = 0
-	CS_FULL = 1 << iota
+	CS_NONE = iota
+	CS_SHORT
+	CS_FULL
 )
 
 // OptionEnableCaller 开启 caller，可以指定 style 为 CS_FULL 为全路径，默认不指定则为为简短路径
 func OptionEnableCaller(caller bool, style ...int) Option {
-	s := CS_NONE
+	s := CS_SHORT
 	if len(style) > 0 {
 		s = style[0]
 	}
 	return func(l *Logger) {
 		l.caller = caller
-		switch {
-		case s == CS_NONE:
+		switch s {
+		case CS_NONE:
 			l.callerenc = func(c zapcore.EntryCaller, enc zapcore.PrimitiveArrayEncoder) {}
-		case s&CS_FULL == CS_FULL:
-			l.callerenc = zapcore.FullCallerEncoder
-		default:
+		case CS_SHORT:
 			l.callerenc = zapcore.ShortCallerEncoder
+		case CS_FULL:
+			l.callerenc = zapcore.FullCallerEncoder
 		}
 	}
 }
