@@ -30,8 +30,8 @@ type Option func(*Logger)
 
 func DefaultLogger() *Logger {
 	return New(
-		OptionSetLogLevel(LF_CAPITAL|LF_COLOR),
-		OptionSetLogLevel(zap.DebugLevel),
+		OptionUseLevelFormat(LF_CAPITAL|LF_COLOR),
+		OptionSetLogLevel(DebugLevel),
 		OptionEnableCaller(true),
 	)
 }
@@ -45,29 +45,20 @@ func New(opts ...Option) *Logger {
 		f(l)
 	}
 
-	var enccfg = zapcore.EncoderConfig{
-		EncodeLevel:      zapcore.CapitalColorLevelEncoder,
-		EncodeTime:       zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05"),
-		ConsoleSeparator: "\t",
-		TimeKey:          "time",
-		LevelKey:         "Level",
-		NameKey:          "logger",
-		CallerKey:        "file", // "caller"   代码调用，如 paginator/paginator.go:148
-		MessageKey:       "msg",
-		StacktraceKey:    "stacktrace",
-		LineEnding:       zapcore.DefaultLineEnding,     // 每行日志的结尾添加 "\n"
-		EncodeDuration:   zapcore.MillisDurationEncoder, // 执行时间，以秒为单位
-		EncodeCaller:     zapcore.ShortCallerEncoder,
-	}
-
-	var enc zapcore.Encoder
+	var enccfg = zap.NewProductionEncoderConfig()
+	enccfg.CallerKey = "file"
+	enccfg.EncodeDuration = zapcore.MillisDurationEncoder // 执行时间，以秒为单位
 
 	if l.timeenc != nil {
 		enccfg.EncodeTime = l.timeenc
+	} else {
+		enccfg.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05")
 	}
 
 	if l.levelenc != nil {
 		enccfg.EncodeLevel = l.levelenc
+	} else {
+		enccfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	}
 
 	if l.ws == nil {
@@ -75,7 +66,7 @@ func New(opts ...Option) *Logger {
 	}
 
 	if l.level == 0 {
-		l.level = zap.DebugLevel
+		l.level = DebugLevel
 	}
 
 	var zapopts []zap.Option
@@ -86,6 +77,7 @@ func New(opts ...Option) *Logger {
 		enccfg.EncodeCaller = l.callerenc
 	}
 
+	var enc zapcore.Encoder
 	if l.style == "json" {
 		enc = zapcore.NewJSONEncoder(enccfg)
 	} else {
@@ -101,7 +93,7 @@ func OptionSetStyle(s string) Option {
 	return func(l *Logger) { l.style = s }
 }
 
-func OptionSetLogLevel(lv zapcore.Level) Option {
+func OptionSetLogLevel(lv Level) Option {
 	return func(l *Logger) { l.level = lv }
 }
 
