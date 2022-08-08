@@ -1,7 +1,6 @@
 package looog
 
 import (
-	"fmt"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"os"
@@ -26,120 +25,158 @@ type Logger struct {
 	cores []zapcore.Core
 }
 
-type Option func(*Logger)
+// LogConfig 用于定制一个 zap.core
+type LogConfig struct {
+	style string // "json" "console"
+	level zapcore.Level
+	out   zapcore.WriteSyncer
 
-func DefaultLogger() *Logger {
-	return New(
-		OptionUseLevelFormat(LF_CAPITAL|LF_COLOR),
-		OptionSetLogLevel(DebugLevel),
-		OptionEnableCaller(true),
+	// 高级设置
+	timekey     string
+	timeEncoder zapcore.TimeEncoder
+
+	levelkey     string
+	levelEncoder zapcore.LevelEncoder
+}
+
+func (cfg *LogConfig) zapcore() zapcore.Core {
+	return zapcore.NewCore(cfg.encoder(), cfg.out, cfg.level)
+}
+
+func (cfg *LogConfig) encoderConfig() zapcore.EncoderConfig {
+	// 用自带的生产环境配置来改
+	c := zap.NewProductionEncoderConfig()
+	// 改掉不太喜欢的配置项
+	c.CallerKey = "file"
+	c.EncodeDuration = zapcore.MillisDurationEncoder // 执行时间，以秒为单位
+	// 用用户自定义的覆盖掉默认项
+	c.TimeKey = cfg.timekey
+	c.EncodeTime = cfg.timeEncoder
+	c.LevelKey = cfg.levelkey
+	c.EncodeLevel = cfg.levelEncoder
+	return c
+}
+
+func (cfg *LogConfig) encoder() zapcore.Encoder {
+	c := cfg.encoderConfig()
+	if cfg.style == string(LS_JSON) {
+		return zapcore.NewJSONEncoder(c)
+	}
+	return zapcore.NewConsoleEncoder(c)
+}
+
+type AdvanceLogConfig func(*LogConfig)
+
+type LogStyle string
+
+const (
+	LS_JSON    LogStyle = "json"
+	LS_CONSOLE          = "console"
+)
+
+func DefaultLogConfig() LogConfig {
+	return NewLogConfig(LS_CONSOLE, DebugLevel,
+		EnableTime(true), EnableLevel(true),
+		SetLevelFormat(LFMTcapital|LFMTcolor),
 	)
 }
 
-func New(opts ...Option) *Logger {
-	l := &Logger{
-		mx: &sync.Mutex{},
+func NewLogConfig(style LogStyle, level Level, advance ...AdvanceLogConfig) LogConfig {
+	cfg := LogConfig{
+		style:       string(style),
+		level:       level,
+		out:         os.Stdout,
+		timeEncoder: zapcore.TimeEncoderOfLayout("2006-01-02 15:04:15"),
 	}
-
-	for _, f := range opts {
-		f(l)
+	for _, f := range advance {
+		f(&cfg)
 	}
-
-	var enccfg = zap.NewProductionEncoderConfig()
-	enccfg.CallerKey = "file"
-	enccfg.EncodeDuration = zapcore.MillisDurationEncoder // 执行时间，以秒为单位
-
-	if l.timeenc != nil {
-		enccfg.EncodeTime = l.timeenc
-	} else {
-		enccfg.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05")
-	}
-
-	if l.levelenc != nil {
-		enccfg.EncodeLevel = l.levelenc
-	} else {
-		enccfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	}
-
-	if l.ws == nil {
-		l.ws = os.Stdout
-	}
-
-	if l.level == 0 {
-		l.level = DebugLevel
-	}
-
-	var zapopts []zap.Option
-
-	if l.caller {
-		// 调用文件和行号，内部使用 runtime.Caller
-		zapopts = append(zapopts, zap.AddCaller(), zap.AddCallerSkip(0))
-		enccfg.EncodeCaller = l.callerenc
-	}
-
-	var enc zapcore.Encoder
-	if l.style == "json" {
-		enc = zapcore.NewJSONEncoder(enccfg)
-	} else {
-		enc = zapcore.NewConsoleEncoder(enccfg)
-	}
-
-	l.cores = append(l.cores, zapcore.NewCore(enc, l.ws, l.level))
-	l.l = zap.New(zapcore.NewTee(l.cores...), zapopts...)
-	return l
+	return cfg
 }
 
-func OptionSetStyle(s string) Option {
-	return func(l *Logger) { l.style = s }
-}
-
-func OptionSetLogLevel(lv Level) Option {
-	return func(l *Logger) { l.level = lv }
-}
-
-// OptionSetOutput "stdout" "file"
-func OptionSetOutput(ws zapcore.WriteSyncer) Option {
-	return func(l *Logger) { l.ws = ws }
-}
-
-func OptionSetOutputFile(path string) Option {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
-	if err != nil {
-		fmt.Printf("set log output file error: %s\n", err.Error())
-	}
-	return OptionSetOutput(f)
-}
-
-func OptionSetTimeFormat(layout string) Option {
-	return func(l *Logger) {
-		l.timeenc = zapcore.TimeEncoderOfLayout(layout)
+func EnableTime(ok bool) AdvanceLogConfig {
+	return func(cfg *LogConfig) {
+		if !ok {
+			cfg.timekey = ""
+		} else if cfg.timekey == "" {
+			cfg.timekey = "time"
+		}
 	}
 }
 
-// level format
+func SetTimeFormat(layout string) AdvanceLogConfig {
+	return func(cfg *LogConfig) {
+		cfg.timeEncoder = zapcore.TimeEncoderOfLayout(layout)
+	}
+}
+
+type LevelFormatFlag int
+
 const (
-	LF_NONE    = 0
-	LF_CAPITAL = 1 << iota
-	LF_COLOR
+	LFMTcapital LevelFormatFlag = 1 << iota
+	LFMTcolor
 )
 
-func OptionUseLevelFormat(flag int) Option {
+func EnableLevel(ok bool) AdvanceLogConfig {
+	return func(cfg *LogConfig) {
+		if !ok {
+			cfg.levelkey = ""
+		} else if cfg.levelkey == "" {
+			cfg.levelkey = "time"
+		}
+	}
+}
+
+func SetLevelFormat(flag LevelFormatFlag) AdvanceLogConfig {
 	var enc zapcore.LevelEncoder
 	switch {
-	case flag == LF_NONE:
-		enc = func(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {}
-	case flag&LF_CAPITAL == LF_CAPITAL && flag&LF_COLOR == LF_COLOR:
+	case flag == LFMTcapital^LFMTcolor:
 		enc = zapcore.CapitalColorLevelEncoder
-	case flag&LF_CAPITAL == LF_CAPITAL:
+	case flag == LFMTcapital:
 		enc = zapcore.CapitalLevelEncoder
-	case flag&LF_COLOR == LF_COLOR:
+	case flag == LFMTcolor:
 		enc = zapcore.LowercaseColorLevelEncoder
 	default:
 		enc = zapcore.LowercaseLevelEncoder
 	}
-	return func(l *Logger) {
-		l.levelenc = enc
+	return func(cfg *LogConfig) {
+		cfg.levelEncoder = enc
 	}
+}
+
+func SetOutputFile(path string) AdvanceLogConfig {
+	return func(cfg *LogConfig) {
+		f, _ := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
+		cfg.out = f
+	}
+}
+
+type Option func(*Logger)
+
+func DefaultLogger() *Logger {
+	return New(DefaultLogConfig(), OptionEnableCaller(false))
+}
+
+func New(config LogConfig, opts ...Option) *Logger {
+	l := &Logger{mx: &sync.Mutex{}}
+	for _, f := range opts {
+		f(l)
+	}
+	l.l = zap.New(zapcore.NewTee(append(l.cores, config.zapcore())...), zap.WithCaller(l.caller), zap.AddCallerSkip(1))
+	return l
+}
+
+func (l *Logger) Add(config LogConfig) {
+	logger.mx.Lock()
+	l.cores = append(l.cores, config.zapcore())
+	logger.mx.Unlock()
+}
+
+func (l *Logger) Rebuild() {
+	_ = logger.l.Sync()
+	l.mx.Lock()
+	l.l = zap.New(zapcore.NewTee(l.cores...), zap.WithCaller(l.caller), zap.AddCallerSkip(1))
+	l.mx.Unlock()
 }
 
 // caller style
